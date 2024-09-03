@@ -1,0 +1,138 @@
+---
+title: "BLUP Workshop Code"
+author: "Jared Lile"
+date: "2024-09-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Data is taken from the following publication: Frank M. You, Qijian Song, Gaofeng Jia, Yanzhao Cheng, Scott Duguid, Helen Booker, Sylvie Cloutier,
+Estimation of genetic parameters and their sampling variances for quantitative traits in the type 2 modified augmented design,
+The Crop Journal,
+Volume 4, Issue 2,
+2016,
+Pages 107-118,
+ISSN 2214-5141,
+https://doi.org/10.1016/j.cj.2016.01.003.
+(https://www.sciencedirect.com/science/article/pii/S2214514116000179)
+
+This is an open access article and is under the following creative commons license:https://creativecommons.org/licenses/by-nc-nd/4.0/
+
+
+**Analysis Start**
+
+Reading in the data and taking the environment, location, year, and oil content columns.
+
+```{r,warning==FALSE}
+library(readxl)
+library(tidyverse)
+
+raw_data <- read_excel("/Users/Jay/Downloads/1-s2.0-S2214514116000179-mmc1.xlsx", skip=1) %>% select(,c("Environment","Year","Location","Genotype","Oil content","Yield"))
+
+factor_variables <- c(1:4)
+
+raw_data[factor_variables] <- lapply(raw_data[factor_variables],factor)
+
+raw_data[c(5,6)] <- lapply(raw_data[c(5,6)],as.numeric)
+
+str(raw_data)
+
+summary(raw_data)
+
+```
+
+Let's first visualize the data to get a sense of the variables we are working with
+
+```{r}
+ggplot(raw_data, aes(x=Environment, y=`Oil content`))+
+         geom_boxplot()+
+         xlab("Environment")+ylab("Oil Content")+
+         ggtitle("Oil Content by Location-Year")+ ylim(39,52)+ theme_bw()
+
+```
+
+```{r}
+ggplot(raw_data, aes(x=Environment, y=Yield))+
+         geom_boxplot()+
+         xlab("Environment")+ylab("Yield")+
+         ggtitle("Yield by Location-Year")+ theme_bw()
+
+
+```
+Yield and Oil Content seem to be correlated, let's plot them against each other.
+
+```{r}
+cor(raw_data$`Oil content`,raw_data$Yield, use="complete")
+
+ggplot(raw_data, aes(x=`Oil content`, y=Yield))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  xlab("Oil Content")+ylab("Yield")+ ggtitle("Oil Content vs Yield")+annotate("text", x = Inf, y = Inf, label = "Correlation = 0.67", hjust = 1.02, vjust = 1.1, size = 5, color = "red")+theme_bw()
+
+
+```
+
+We have some missing data in our dataset, for simplicity, let's remove all missing values to illustrate a point. We'll then compare the sample size for each environment with the favstats function. As can be seen, the sample sizes are large and nearly equal for each environment.
+
+
+```{r}
+library(mosaic)
+
+raw_data_narm <- na.omit(raw_data)
+favstats(Yield~Environment, data=raw_data_narm)
+f1 <- favstats(Yield~Genotype, data=raw_data_narm)
+
+```
+
+
+Lets first fit a linear model using the lm() function to calculate BLUEs for each genotype
+
+
+```{r}
+library(emmeans)
+
+lm_yield <- lm(Yield~Environment + Genotype, data=raw_data_narm)
+
+summary(lm_yield)
+
+Blues <- as.data.frame(emmeans(lm_yield, ~Genotype))
+
+```
+
+
+Now let's fit a mixed effect model with genotype as a random intercept term and calculate BLUPs.
+
+```{r}
+library(lme4)
+
+lme_yield <- lmer(Yield~Environment + (1|Genotype), data=raw_data_narm)
+
+BLUPs <- ranef(lme_yield)$Genotype + fixef(lme_yield)["(Intercept)"]
+names(BLUPs) <- "BLUPs"
+```
+
+
+```{r}
+cor(Blues$emmean,BLUPs$BLUPs)
+ggplot(Blues, aes(x=emmean, y=BLUPs$BLUPs))+geom_point()+
+  xlab("BLUEs")+ylab("BLUPS")+ ggtitle("BLUES vs BLUPs Yield")+annotate("text", x = Inf, y = Inf, label = "Correlation = 0.97", hjust = 1.02, vjust = 1.1, size = 3, color = "red")+theme_bw()
+  
+
+```
+
+
+```{r}
+Blues$dif <- scale(BLUPs$BLUPs)-scale(Blues$emmean)
+
+ggplot(Blues, aes(Genotype, dif))+
+  geom_point()+
+  geom_hline(yintercept=0)+theme_bw()
+
+not_shrunk_genos <- Blues[Blues$dif > 1.0,]
+
+sample_sizes <- f1[f1$Genotype %in% c(not_shrunk_genos$Genotype),]
+
+```
